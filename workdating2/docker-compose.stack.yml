@@ -1,0 +1,60 @@
+version: '3.8'
+
+x-deploy: &base-deploy
+  restart_policy:
+    condition: on-failure
+  placement:
+    constraints:
+      - node.labels.workdatingbot == true
+
+services:
+  bot:
+    image: docker.sublayers.net/workdating/bot:latest
+    command:
+      - run-webhook
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests;assert requests.get('http://localhost:80/healthcheck').status_code == 200"]
+      start_period: 5s
+    environment:
+      RUN_MIGRATIONS: 'true'
+      WEBHOOK_BASE_PATH:
+    networks:
+     - default
+     - web
+    depends_on:
+      - redis
+      - postgres
+    deploy:
+      <<: *base-deploy
+      update_config:
+        parallelism: 2
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      labels:
+        traefik.enable: true
+        traefik.docker.network: web
+        traefik.http.routers.workdatingbot-https.entrypoints: web-secure
+        traefik.http.routers.workdatingbot-https.rule: Host(`${DOMAIN}`) && PathPrefix(`${WEBHOOK_BASE_PATH}`)
+        traefik.http.routers.workdatingbot-https.service: workdatingbot
+        traefik.http.routers.workdatingbot-https.tls: true
+        traefik.http.services.workdatingbot.loadbalancer.server.port: 80
+
+  redis:
+    networks:
+      - default
+    deploy:
+      <<: *base-deploy
+
+  postgres:
+    networks:
+      - default
+    deploy:
+      <<: *base-deploy
+
+networks:
+  default:
+    driver: overlay
+  web:
+    driver: overlay
+    external: true
